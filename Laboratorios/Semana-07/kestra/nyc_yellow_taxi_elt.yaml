@@ -1,0 +1,188 @@
+id: nyc_yellow_taxi_elt
+namespace: universidad.semana07
+description: >
+  Descarga NYC Yellow Taxi, carga Bronze de forma idempotente y ejecuta dbt
+  para construir y probar las capas Silver y Gold.
+
+inputs:
+  - id: periods
+    type: ARRAY
+    itemType: STRING
+    description: Periodos YYYY-MM que se descargarán desde NYC TLC.
+    defaults:
+      - "2025-01"
+      - "2025-02"
+      - "2025-03"
+      - "2025-04"
+      - "2025-05"
+      - "2025-06"
+      - "2025-07"
+      - "2025-08"
+      - "2025-09"
+      - "2025-10"
+      - "2025-11"
+      - "2025-12"
+      - "2026-01"
+      - "2026-02"
+      - "2026-03"
+      - "2026-04"
+      - "2026-05"
+      - "2026-06"
+      - "2026-07"
+      # Agregar "2026-08" cuando el archivo oficial deje de responder 403.
+
+tasks:
+  - id: validate_connection
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: |
+      SELECT CURRENT_DATABASE() AS DATABASE_NAME,
+             CURRENT_WAREHOUSE() AS WAREHOUSE_NAME,
+             CURRENT_ROLE() AS ROLE_NAME;
+    fetchType: FETCH
+
+  - id: download_zone_lookup
+    type: io.kestra.plugin.core.http.Download
+    uri: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+
+  - id: upload_zone_lookup
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    from: "{{ outputs.download_zone_lookup.uri }}"
+    stageName: "@LAB_SEMANA_07_DB.BRONZE.NYC_TAXI_STAGE"
+    prefix: zones
+    fileName: taxi_zone_lookup.csv
+    compress: false
+
+  - id: load_zone_lookup
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    transaction: true
+    sql: |
+      DELETE FROM LAB_SEMANA_07_DB.BRONZE.TAXI_ZONE_LOOKUP_RAW;
+
+      COPY INTO LAB_SEMANA_07_DB.BRONZE.TAXI_ZONE_LOOKUP_RAW
+        (LOCATION_ID, BOROUGH, ZONE, SERVICE_ZONE, SOURCE_FILE, LOADED_AT)
+      FROM (
+        SELECT
+          TRY_TO_NUMBER(t.$1),
+          t.$2::VARCHAR,
+          t.$3::VARCHAR,
+          t.$4::VARCHAR,
+          METADATA$FILENAME,
+          METADATA$START_SCAN_TIME
+        FROM @LAB_SEMANA_07_DB.BRONZE.NYC_TAXI_STAGE/zones t
+      )
+      FILE_FORMAT = (
+        TYPE = CSV
+        SKIP_HEADER = 1
+        FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+      )
+      FORCE = TRUE
+      ON_ERROR = ABORT_STATEMENT;
+
+  - id: ingest_months
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.periods }}"
+    concurrencyLimit: 1
+    tasks:
+      - id: download_trip_file
+        type: io.kestra.plugin.core.http.Download
+        uri: "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{{ taskrun.value }}.parquet"
+        retry:
+          type: constant
+          interval: PT30S
+          maxAttempt: 3
+
+      - id: upload_trip_file
+        type: io.kestra.plugin.jdbc.snowflake.Upload
+        url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+        username: "{{ envs.snowflake_user }}"
+        password: "{{ envs.snowflake_password }}"
+        from: "{{ outputs.download_trip_file[taskrun.value].uri }}"
+        stageName: "@LAB_SEMANA_07_DB.BRONZE.NYC_TAXI_STAGE"
+        prefix: "trips/{{ taskrun.value }}"
+        fileName: "yellow_tripdata_{{ taskrun.value }}.parquet"
+        compress: false
+
+      - id: replace_bronze_period
+        type: io.kestra.plugin.jdbc.snowflake.Queries
+        url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+        username: "{{ envs.snowflake_user }}"
+        password: "{{ envs.snowflake_password }}"
+        transaction: true
+        sql: |
+          DELETE FROM LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW
+          WHERE SOURCE_PERIOD = '{{ taskrun.value }}';
+
+          COPY INTO LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW
+            (RAW_RECORD, SOURCE_FILE, SOURCE_PERIOD, LOADED_AT)
+          FROM (
+            SELECT
+              t.$1,
+              METADATA$FILENAME,
+              '{{ taskrun.value }}',
+              METADATA$START_SCAN_TIME
+            FROM @LAB_SEMANA_07_DB.BRONZE.NYC_TAXI_STAGE/trips/{{ taskrun.value }} t
+          )
+          FILE_FORMAT = (
+            FORMAT_NAME = 'LAB_SEMANA_07_DB.BRONZE.NYC_TAXI_PARQUET_FORMAT'
+          )
+          FORCE = TRUE
+          ON_ERROR = ABORT_STATEMENT;
+
+  - id: dbt_transformation
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: clone_repository
+        type: io.kestra.plugin.git.Clone
+        url: https://github.com/RazorJDCZ/Ciencia-de-datos.git
+        branch: main
+
+      - id: dbt_build
+        type: io.kestra.plugin.dbt.cli.DbtCLI
+        taskRunner:
+          type: io.kestra.plugin.scripts.runner.docker.Docker
+        containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
+        projectDir: Laboratorios/Semana-07/dbt
+        commands:
+          - dbt build --full-refresh
+        profiles: |
+          nyc_taxi:
+            outputs:
+              lab:
+                type: snowflake
+                account: "{{ envs.snowflake_account }}"
+                user: "{{ envs.snowflake_user }}"
+                password: "{{ envs.snowflake_password }}"
+                role: "{{ envs.snowflake_role }}"
+                database: "{{ envs.snowflake_database }}"
+                warehouse: "{{ envs.snowflake_warehouse }}"
+                schema: "{{ envs.snowflake_schema }}"
+                threads: 4
+                client_session_keep_alive: false
+            target: lab
+
+  - id: validate_result
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: |
+      SELECT
+        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW) AS BRONZE_ROWS,
+        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.SILVER.YELLOW_TAXI_TRIPS) AS SILVER_ROWS,
+        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.GOLD.FCT_TRIPS) AS GOLD_ROWS;
+    fetchType: FETCH
+
+triggers:
+  - id: manual_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 3 1 * *"
+    disabled: true

@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: "{{ target.database }}"
+    schema: BRONZE
+    tables:
+      - name: yellow_taxi_raw
+        identifier: YELLOW_TAXI_RAW
+      - name: taxi_zone_lookup_raw
+        identifier: TAXI_ZONE_LOOKUP_RAW

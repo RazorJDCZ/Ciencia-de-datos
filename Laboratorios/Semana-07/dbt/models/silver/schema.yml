@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: yellow_taxi_trips
+    description: Viajes tipados, estandarizados, validados y sin duplicados exactos.
+    columns:
+      - name: trip_id
+        tests:
+          - not_null
+          - unique
+      - name: pickup_datetime
+        tests:
+          - not_null
+      - name: dropoff_datetime
+        tests:
+          - not_null
+      - name: pickup_location_id
+        tests:
+          - not_null
+      - name: dropoff_location_id
+        tests:
+          - not_null
