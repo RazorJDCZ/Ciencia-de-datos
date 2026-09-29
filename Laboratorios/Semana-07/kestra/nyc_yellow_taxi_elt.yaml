@@ -1,8 +1,8 @@
 id: nyc_yellow_taxi_elt
 namespace: universidad.semana07
 description: >
-  Descarga NYC Yellow Taxi, carga Bronze de forma idempotente y ejecuta dbt
-  para construir y probar las capas Silver y Gold.
+  Crea la infraestructura necesaria en Snowflake y carga NYC Yellow Taxi en
+  Bronze de forma idempotente. Silver y Gold se construyen manualmente con dbt.
 
 inputs:
   - id: periods
@@ -32,16 +32,51 @@ inputs:
       # Agregar "2026-08" cuando el archivo oficial deje de responder 403.
 
 tasks:
-  - id: validate_connection
-    type: io.kestra.plugin.jdbc.snowflake.Query
-    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+  - id: setup_snowflake
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    description: Crea warehouse, base, schemas, tablas Bronze, stage y file format.
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?role={{ envs.snowflake_role }}"
     username: "{{ envs.snowflake_user }}"
     password: "{{ envs.snowflake_password }}"
+    transaction: false
     sql: |
-      SELECT CURRENT_DATABASE() AS DATABASE_NAME,
-             CURRENT_WAREHOUSE() AS WAREHOUSE_NAME,
-             CURRENT_ROLE() AS ROLE_NAME;
-    fetchType: FETCH
+      CREATE WAREHOUSE IF NOT EXISTS {{ envs.snowflake_warehouse }}
+        WAREHOUSE_SIZE = 'X-SMALL'
+        AUTO_SUSPEND = 60
+        AUTO_RESUME = TRUE
+        INITIALLY_SUSPENDED = TRUE;
+
+      CREATE DATABASE IF NOT EXISTS {{ envs.snowflake_database }};
+
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.BRONZE;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.SILVER;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.GOLD;
+
+      CREATE FILE FORMAT IF NOT EXISTS
+        {{ envs.snowflake_database }}.BRONZE.NYC_TAXI_PARQUET_FORMAT
+        TYPE = PARQUET
+        USE_LOGICAL_TYPE = TRUE;
+
+      CREATE STAGE IF NOT EXISTS
+        {{ envs.snowflake_database }}.BRONZE.NYC_TAXI_STAGE;
+
+      CREATE TABLE IF NOT EXISTS
+        {{ envs.snowflake_database }}.BRONZE.YELLOW_TAXI_RAW (
+          RAW_RECORD VARIANT NOT NULL,
+          SOURCE_FILE VARCHAR NOT NULL,
+          SOURCE_PERIOD VARCHAR(7) NOT NULL,
+          LOADED_AT TIMESTAMP_TZ NOT NULL
+        );
+
+      CREATE TABLE IF NOT EXISTS
+        {{ envs.snowflake_database }}.BRONZE.TAXI_ZONE_LOOKUP_RAW (
+          LOCATION_ID NUMBER,
+          BOROUGH VARCHAR,
+          ZONE VARCHAR,
+          SERVICE_ZONE VARCHAR,
+          SOURCE_FILE VARCHAR NOT NULL,
+          LOADED_AT TIMESTAMP_TZ NOT NULL
+        );
 
   - id: download_zone_lookup
     type: io.kestra.plugin.core.http.Download
@@ -58,15 +93,19 @@ tasks:
     fileName: taxi_zone_lookup.csv
     compress: false
 
-  - id: load_zone_lookup
-    type: io.kestra.plugin.jdbc.snowflake.Queries
+  - id: clear_zone_lookup
+    type: io.kestra.plugin.jdbc.snowflake.Query
     url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
     username: "{{ envs.snowflake_user }}"
     password: "{{ envs.snowflake_password }}"
-    transaction: true
-    sql: |
-      DELETE FROM LAB_SEMANA_07_DB.BRONZE.TAXI_ZONE_LOOKUP_RAW;
+    sql: DELETE FROM LAB_SEMANA_07_DB.BRONZE.TAXI_ZONE_LOOKUP_RAW
 
+  - id: load_zone_lookup
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    sql: |
       COPY INTO LAB_SEMANA_07_DB.BRONZE.TAXI_ZONE_LOOKUP_RAW
         (LOCATION_ID, BOROUGH, ZONE, SERVICE_ZONE, SOURCE_FILE, LOADED_AT)
       FROM (
@@ -111,16 +150,21 @@ tasks:
         fileName: "yellow_tripdata_{{ taskrun.value }}.parquet"
         compress: false
 
-      - id: replace_bronze_period
-        type: io.kestra.plugin.jdbc.snowflake.Queries
+      - id: clear_bronze_period
+        type: io.kestra.plugin.jdbc.snowflake.Query
         url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
         username: "{{ envs.snowflake_user }}"
         password: "{{ envs.snowflake_password }}"
-        transaction: true
         sql: |
           DELETE FROM LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW
-          WHERE SOURCE_PERIOD = '{{ taskrun.value }}';
+          WHERE SOURCE_PERIOD = '{{ taskrun.value }}'
 
+      - id: load_bronze_period
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
+        username: "{{ envs.snowflake_user }}"
+        password: "{{ envs.snowflake_password }}"
+        sql: |
           COPY INTO LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW
             (RAW_RECORD, SOURCE_FILE, SOURCE_PERIOD, LOADED_AT)
           FROM (
@@ -137,48 +181,18 @@ tasks:
           FORCE = TRUE
           ON_ERROR = ABORT_STATEMENT;
 
-  - id: dbt_transformation
-    type: io.kestra.plugin.core.flow.WorkingDirectory
-    tasks:
-      - id: clone_repository
-        type: io.kestra.plugin.git.Clone
-        url: https://github.com/RazorJDCZ/Ciencia-de-datos.git
-        branch: main
-
-      - id: dbt_build
-        type: io.kestra.plugin.dbt.cli.DbtCLI
-        taskRunner:
-          type: io.kestra.plugin.scripts.runner.docker.Docker
-        containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
-        projectDir: Laboratorios/Semana-07/dbt
-        commands:
-          - dbt build --full-refresh
-        profiles: |
-          nyc_taxi:
-            outputs:
-              lab:
-                type: snowflake
-                account: "{{ envs.snowflake_account }}"
-                user: "{{ envs.snowflake_user }}"
-                password: "{{ envs.snowflake_password }}"
-                role: "{{ envs.snowflake_role }}"
-                database: "{{ envs.snowflake_database }}"
-                warehouse: "{{ envs.snowflake_warehouse }}"
-                schema: "{{ envs.snowflake_schema }}"
-                threads: 4
-                client_session_keep_alive: false
-            target: lab
-
-  - id: validate_result
+  - id: validate_bronze
     type: io.kestra.plugin.jdbc.snowflake.Query
     url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?warehouse={{ envs.snowflake_warehouse }}&db={{ envs.snowflake_database }}&schema={{ envs.snowflake_schema }}&role={{ envs.snowflake_role }}"
     username: "{{ envs.snowflake_user }}"
     password: "{{ envs.snowflake_password }}"
     sql: |
       SELECT
-        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW) AS BRONZE_ROWS,
-        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.SILVER.YELLOW_TAXI_TRIPS) AS SILVER_ROWS,
-        (SELECT COUNT(*) FROM LAB_SEMANA_07_DB.GOLD.FCT_TRIPS) AS GOLD_ROWS;
+        COUNT(*) AS BRONZE_ROWS,
+        COUNT(DISTINCT SOURCE_PERIOD) AS LOADED_PERIODS,
+        MIN(SOURCE_PERIOD) AS FIRST_PERIOD,
+        MAX(SOURCE_PERIOD) AS LAST_PERIOD
+      FROM LAB_SEMANA_07_DB.BRONZE.YELLOW_TAXI_RAW;
     fetchType: FETCH
 
 triggers:

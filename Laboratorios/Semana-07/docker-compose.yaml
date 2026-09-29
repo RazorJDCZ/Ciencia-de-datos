@@ -119,6 +119,27 @@ services:
       SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
 
 
+  # dbt Core (ejecución manual)
+  dbt:
+    image: ghcr.io/kestra-io/dbt-snowflake:latest
+
+    working_dir: /usr/app
+
+    command: tail -f /dev/null
+
+    volumes:
+      - ./dbt:/usr/app
+
+    environment:
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+      SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
+      SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+
+
 volumes:
   kestra-db-data:
   kestra-storage:
