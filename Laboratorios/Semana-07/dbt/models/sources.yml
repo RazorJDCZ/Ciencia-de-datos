@@ -7,5 +7,24 @@ sources:
     tables:
       - name: yellow_taxi_raw
         identifier: YELLOW_TAXI_RAW
+        description: Registros Parquet sin transformar con metadatos de procedencia.
+        columns:
+          - name: raw_record
+            data_tests: [not_null]
+          - name: source_file
+            data_tests: [not_null]
+          - name: source_period
+            data_tests: [not_null]
+          - name: loaded_at
+            data_tests: [not_null]
+
       - name: taxi_zone_lookup_raw
         identifier: TAXI_ZONE_LOOKUP_RAW
+        description: Catálogo oficial de zonas de taxi de NYC.
+        columns:
+          - name: location_id
+            data_tests: [not_null, unique]
+          - name: source_file
+            data_tests: [not_null]
+          - name: loaded_at
+            data_tests: [not_null]

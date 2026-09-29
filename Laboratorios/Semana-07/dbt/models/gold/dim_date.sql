@@ -1,9 +1,11 @@
 with dates as (
     select pickup_datetime::date as calendar_date
     from {{ ref('yellow_taxi_trips') }}
+    where is_core_valid
     union
     select dropoff_datetime::date as calendar_date
     from {{ ref('yellow_taxi_trips') }}
+    where is_core_valid
 )
 
 select

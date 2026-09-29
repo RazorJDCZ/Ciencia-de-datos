@@ -7,6 +7,7 @@ select distinct
         when 4 then 'Dispute'
         when 5 then 'Unknown'
         when 6 then 'Voided trip'
-        else 'Unknown'
+        else 'Unmapped payment type'
     end as payment_type_name
 from {{ ref('yellow_taxi_trips') }}
+where is_core_valid

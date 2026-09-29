@@ -2,21 +2,106 @@ version: 2
 
 models:
   - name: yellow_taxi_trips
-    description: Viajes tipados, estandarizados, validados y sin duplicados exactos.
+    description: >
+      Registros Yellow Taxi tipados, normalizados y deduplicados exactamente.
+      Conserva anomalías con indicadores de calidad para evitar pérdida silenciosa
+      de información y distinguir viajes utilizables de ajustes financieros.
     columns:
       - name: trip_id
-        tests:
+        description: Hash estable del periodo y del registro raw completo.
+        data_tests:
           - not_null
           - unique
-      - name: pickup_datetime
-        tests:
+
+      - name: vendor_id
+        data_tests:
           - not_null
-      - name: dropoff_datetime
-        tests:
+
+      - name: rate_code_id
+        data_tests:
           - not_null
-      - name: pickup_location_id
-        tests:
+
+      - name: payment_type_id
+        data_tests:
           - not_null
-      - name: dropoff_location_id
-        tests:
+
+      - name: store_and_fwd_flag
+        description: Y, N o U cuando el valor original está ausente o no es reconocido.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Y', 'N', 'U']
+
+      - name: source_period
+        data_tests:
+          - not_null
+
+      - name: source_file
+        data_tests:
+          - not_null
+
+      - name: loaded_at
+        data_tests:
+          - not_null
+
+      - name: core_quality_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - VALID
+                  - INVALID_DATETIME
+                  - NEGATIVE_DURATION
+                  - INVALID_LOCATION
+                  - MISSING_DISTANCE
+                  - NEGATIVE_DISTANCE
+                  - NEGATIVE_PASSENGER_COUNT
+
+      - name: quality_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['VALID', 'VALID_WITH_WARNINGS', 'INVALID']
+
+      - name: is_core_valid
+        data_tests:
+          - not_null
+
+      - name: is_analytically_valid
+        data_tests:
+          - not_null
+
+      - name: is_financial_adjustment
+        data_tests:
+          - not_null
+
+      - name: is_missing_passenger_count
+        data_tests:
+          - not_null
+
+      - name: is_missing_trip_distance
+        data_tests:
+          - not_null
+
+      - name: is_missing_total_amount
+        data_tests:
+          - not_null
+
+      - name: is_extreme_duration
+        data_tests:
+          - not_null
+
+      - name: is_zero_distance
+        data_tests:
+          - not_null
+
+      - name: is_zero_total
+        data_tests:
+          - not_null
+
+      - name: is_source_period_mismatch
+        data_tests:
           - not_null

@@ -25,9 +25,13 @@ models:
     columns:
       - name: location_key
         tests: [not_null, unique]
+      - name: is_known_location
+        data_tests: [not_null]
 
   - name: fct_trips
-    description: Una fila por viaje Yellow Taxi válido y deduplicado.
+    description: >
+      Una fila por registro Yellow Taxi deduplicado y estructuralmente válido.
+      Conserva ajustes financieros y advertencias mediante indicadores explícitos.
     columns:
       - name: trip_key
         tests: [not_null, unique]
@@ -80,3 +84,31 @@ models:
               arguments:
                 to: ref('dim_date')
                 field: date_key
+
+      - name: quality_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['VALID', 'VALID_WITH_WARNINGS']
+
+      - name: is_analytically_valid
+        data_tests: [not_null]
+
+      - name: is_financial_adjustment
+        data_tests: [not_null]
+
+      - name: is_missing_passenger_count
+        data_tests: [not_null]
+
+      - name: is_extreme_duration
+        data_tests: [not_null]
+
+      - name: is_zero_distance
+        data_tests: [not_null]
+
+      - name: is_zero_total
+        data_tests: [not_null]
+
+      - name: is_source_period_mismatch
+        data_tests: [not_null]

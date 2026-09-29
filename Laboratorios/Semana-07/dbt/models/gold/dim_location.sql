@@ -1,9 +1,11 @@
 with trip_locations as (
     select pickup_location_id as location_id
     from {{ ref('yellow_taxi_trips') }}
+    where is_core_valid
     union
     select dropoff_location_id as location_id
     from {{ ref('yellow_taxi_trips') }}
+    where is_core_valid
 ),
 
 zones as (
@@ -23,6 +25,7 @@ select
     l.location_id as location_key,
     coalesce(z.borough, 'Unknown') as borough,
     coalesce(z.zone, 'Unknown') as zone,
-    coalesce(z.service_zone, 'Unknown') as service_zone
+    coalesce(z.service_zone, 'Unknown') as service_zone,
+    z.location_id is not null as is_known_location
 from trip_locations l
 left join zones z using (location_id)

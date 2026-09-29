@@ -42,7 +42,9 @@ erDiagram
     }
 ```
 
-El grano de `GOLD.FCT_TRIPS` es una fila por viaje válido y deduplicado.
+El grano de `GOLD.FCT_TRIPS` es una fila por registro de viaje deduplicado y
+estructuralmente válido. Los ajustes financieros y las advertencias se
+conservan mediante indicadores para que el consumidor decida cómo analizarlos.
 
 ## Ejecución
 
@@ -107,10 +109,19 @@ del estado actual de Bronze.
 ## Decisiones de calidad en Silver
 
 - Los campos se convierten con `TRY_TO_*` para evitar conversiones implícitas.
-- Los nulos categóricos se asignan a valores conocidos de `Unknown`.
-- Los viajes sin fechas o ubicaciones válidas se excluyen.
-- Se excluyen duraciones negativas, distancias negativas y totales negativos.
+- Los faltantes no se confunden con valores observados: pasajeros permanece
+  nulo y `store_and_fwd_flag` usa `U` cuando es desconocido.
 - Los duplicados exactos se eliminan mediante una llave hash estable.
+- Silver conserva registros inválidos y les asigna `core_quality_status`,
+  `quality_status` e indicadores específicos para mantener auditabilidad.
+- Gold excluye solamente registros estructuralmente inválidos, como fechas,
+  duraciones, ubicaciones o distancias imposibles.
+- Los totales negativos se conservan como posibles reversiones o ajustes con
+  `is_financial_adjustment`, en lugar de eliminarlos silenciosamente.
+- `is_analytically_valid` permite reproducir un subconjunto recomendado para
+  análisis generales sin perder los registros originales normalizados.
+- Distancia cero, total cero, duración superior a 24 horas y discrepancias con
+  el mes del archivo se conservan como advertencias explícitas.
 - Se conserva `source_file`, `source_period` y `loaded_at` para trazabilidad.
 
 ## Disponibilidad de agosto de 2026

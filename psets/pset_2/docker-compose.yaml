@@ -62,14 +62,16 @@ services:
 
           tasks:
             tmp-dir:
-              path: /tmp/kestra-wd/tmp
+              # Ruta ejecutable y compartida con los contenedores del Docker Task Runner.
+              # /tmp en Docker Desktop para Windows está montado con "noexec".
+              path: /opt/kestra-wd/tmp
 
           url: http://localhost:8080
 
     volumes:
       - kestra-storage:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/kestra-wd:/tmp/kestra-wd
+      - /opt/kestra-wd:/opt/kestra-wd
 
     depends_on:
       - kestra-db
